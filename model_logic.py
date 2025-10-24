@@ -5,10 +5,10 @@ from collections import defaultdict
 
 # ---- Item storage profiles ----
 ITEM_PROFILES = {
-    "banana":        {"ideal_temp": 13, "ideal_humidity": 85, "shelf_life": 5,  "zone": "A"},
-    "tomato":        {"ideal_temp": 10, "ideal_humidity": 80, "shelf_life": 7,  "zone": "B"},
-    "onion":         {"ideal_temp": 4,  "ideal_humidity": 65, "shelf_life": 30, "zone": "C"},
-    "potato":        {"ideal_temp": 6,  "ideal_humidity": 90, "shelf_life": 25, "zone": "D"}
+    "banana": {"ideal_temp": 13, "ideal_humidity": 85, "shelf_life": 5,  "zone": "A"},
+    "tomato": {"ideal_temp": 10, "ideal_humidity": 80, "shelf_life": 7,  "zone": "B"},
+    "onion":  {"ideal_temp": 4,  "ideal_humidity": 65, "shelf_life": 30, "zone": "C"},
+    "potato": {"ideal_temp": 6,  "ideal_humidity": 90, "shelf_life": 25, "zone": "D"}
 }
 
 # Gas thresholds for spoilage detection
@@ -21,18 +21,6 @@ GAS_THRESHOLDS = {
 
 # ---- Single item AI decision ----
 def analyze_item(item_data):
-    """
-    item_data:
-    {
-        "label": "banana",
-        "temperature": 14,
-        "humidity": 80,
-        "ethylene": 0.5,
-        "ammonia": 0.03,
-        "h2s": 0.04,
-        "co2": 0.18
-    }
-    """
     label = item_data.get("label", "banana").lower()
     profile = ITEM_PROFILES.get(label, ITEM_PROFILES["banana"])
 
@@ -83,6 +71,9 @@ def analyze_item(item_data):
     alerts = []
     if spoil_risk == "high":
         alerts.append({"type": "Critical Alert", "message": f"{label.title()} spoilage risk detected!"})
+    elif spoil_risk == "medium":
+        alerts.append({"type": "Warning Alert", "message": f"{label.title()} may spoil soon."})
+    
     if temp_priority == "high":
         alerts.append({"type": "Warning Alert", "message": f"{label.title()} zone temperature exceeds safe range!"})
 
@@ -119,25 +110,40 @@ def aggregate_storage(items_list):
     Returns storage-level dashboard like Zone A/B/C/D
     """
     zones = defaultdict(list)
+    all_alerts = []
+
+    # Analyze items and assign to zones
     for item in items_list:
-        zone = ITEM_PROFILES.get(item.get("label","banana"))["zone"]
-        zones[zone].append(analyze_item(item))
+        label = item.get("label","banana").lower()
+        zone = ITEM_PROFILES.get(label, ITEM_PROFILES["banana"])["zone"]
+        analyzed = analyze_item(item)
+        zones[zone].append(analyzed)
+        all_alerts.extend(analyzed["active_alerts"])
 
     dashboard = {}
     for zone, items in zones.items():
         # Compute zone-level aggregates
         avg_temp = round(sum(i["temperature"] for i in items)/len(items),1)
         avg_hum  = round(sum(i["humidity"] for i in items)/len(items),1)
-        max_risk = max([i["spoilage_risk_detection"]["risk"] for i in items],
-                       key=lambda x: {"low":0,"medium":1,"high":2}[x])
-        peltier = 50 + {"low":0,"medium":20,"high":40}[{"low":0,"medium":1,"high":2}[max_risk]] # sample duty %
+
+        # Highest spoilage risk in zone
+        risk_order = {"low":0, "medium":1, "high":2}
+        max_risk = max(items, key=lambda x: risk_order[x["spoilage_risk_detection"]["risk"]])
+        max_risk_level = max_risk["spoilage_risk_detection"]["risk"].title()
+
+        # Peltier duty % based on risk
+        peltier = 50 + {"low":0, "medium":20, "high":40}[risk_order[max_risk["spoilage_risk_detection"]["risk"]]]
 
         dashboard[f"Zone {zone}"] = {
-            "risk_level": max_risk.title(),
+            "risk_level": max_risk_level,
             "items_stored": len(items),
             "temperature": avg_temp,
             "humidity": avg_hum,
             "peltier_duty": f"{peltier}%",
             "items": items
         }
-    return dashboard
+
+    return {
+        "storage_compartments": dashboard,
+        "active_alerts": all_alerts
+    }
